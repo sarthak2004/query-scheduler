@@ -7,7 +7,10 @@ import whisper
 import numpy as np
 import pandas as pd
 import nltk
-import keras
+from nltk import *
+from nltk.corpus import wordnet
+from nltk.corpus import stopwords
+# from wordnet import Dictionary 
 import pickle
 from keras.models import load_model
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
@@ -19,7 +22,8 @@ import random
 import joblib
 from sklearn.feature_extraction.text import CountVectorizer
 from nltk.stem.snowball import SnowballStemmer
-
+import xgboost
+import ffmpeg
 
 
 
@@ -44,8 +48,6 @@ def index():
         audio_byte = document["audio"]
         with open("retrieved_audio.wav", "wb") as f:
             f.write(audio_byte)
-
-        subject= [document["subject"]]
        
 
         # machine learning
@@ -64,22 +66,55 @@ def index():
 
 
 
-        tfidf = joblib.load('tfidf.joblib')
+        tfidf_transformer = joblib.load('tfidf.joblib')
         
-        stemmer = SnowballStemmer("english", ignore_stopwords=True)
-        class StemmedCountVectorizer(CountVectorizer):
-            def build_analyzer(self):
-                analyzer = super(StemmedCountVectorizer, self).build_analyzer()
-                return lambda doc: ([stemmer.stem(w) for w in analyzer(doc)])
-        stemmed_count_vect = StemmedCountVectorizer(stop_words='english')
-        X_train_counts = stemmed_count_vect.fit_transform(subject)
+        input_text = document["subject"]
+        print(input_text)
 
 
-        tfidf_transformer = tfidf
-        X_train_tfidf= tfidf_transformer.transform(X_train_counts)
+# Convert to lowercase
+        lowercase_text = input_text.lower()
 
-        model2= joblib.load("urgency_classifier.joblib")
-        model2_train= model2.predict(X_train_tfidf)-1
+        print(lowercase_text)
+
+        # Tokenize the text
+        tokens = word_tokenize(lowercase_text)
+
+        # Remove stopwords
+        stop = set(stopwords.words("english"))
+        filtered_tokens = [word for word in tokens if word not in stop]
+
+        # Part-of-speech tagging
+        pos_tags = pos_tag(filtered_tokens)
+        model_xgb2 = joblib.load("urgency_classifier.joblib")
+
+        # Define a function to get WordNet POS tags
+        def get_wordnet_pos(tag):
+            if tag.startswith('J'):
+                return wordnet.ADJ
+            elif tag.startswith('V'):
+                return wordnet.VERB
+            elif tag.startswith('N'):
+                return wordnet.NOUN
+            elif tag.startswith('R'):
+                return wordnet.ADV
+            else:
+                return wordnet.NOUN
+
+        # Lemmatization
+        wnl = WordNetLemmatizer()
+        lemmatized = [wnl.lemmatize(word, get_wordnet_pos(pos_tag)) for word, pos_tag in pos_tags]
+
+        # Remove stopwords again
+        final_result = [word for word in lemmatized if word not in stop]
+
+     
+        result_str = tfidf_transformer.transform(final_result)
+
+        predictions = model_xgb2.predict(result_str)
+
+        # 'predictions' now contains the index of the most probable class for each input instance
+        model2_train = (sum(predictions)/ len(predictions))-1
 
         def zcr(data, frame_length, hop_length):
             zcr_values = librosa.feature.zero_crossing_rate(y=data, frame_length=frame_length, hop_length=hop_length)
@@ -132,7 +167,7 @@ def index():
         def get_scores(input_file):
             predictions_arr = []
             confidence_scores_arr = []
-            audio_path = input_file
+            audio_path = "assets/recording.wav"
             intervals_array = split_audio(audio_path)
             for i in intervals_array:
                 predicted_class = prediction(i)
@@ -161,6 +196,7 @@ def index():
 
         sound_file = "assets/recording.wav"
         final_score = get_scores(sound_file)
+
 
 
 
